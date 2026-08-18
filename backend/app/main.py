@@ -1,15 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.database import engine, Base
+from app.api import jobs_router, sources_router
+from app.api.ingestion_v2 import router as ingestion_router
 import logging
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Create all tables
-Base.metadata.create_all(bind=engine)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -26,6 +24,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Lazy load database - only create tables when needed
+@app.on_event("startup")
+async def startup_event():
+    """Create tables on startup."""
+    try:
+        from app.database import engine, Base
+        logger.info("Creating database tables...")
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error(f"Error creating tables: {e}")
+        # Don't crash the app, let it start anyway
+
+
+# Register routers
+app.include_router(jobs_router)
+app.include_router(sources_router)
+app.include_router(ingestion_router)
 
 
 @app.get("/health")
