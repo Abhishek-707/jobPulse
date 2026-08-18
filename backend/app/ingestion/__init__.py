@@ -1,0 +1,1 @@
+# Ingestion module - contains source adapters and pipeline logic
