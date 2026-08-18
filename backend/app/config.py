@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     API_TITLE: str = "JobPulse API"
     API_VERSION: str = "0.1.0"
     
+    # Ingestion
+    INGESTION_TIMEOUT: int = 30
+    INGESTION_MAX_RETRIES: int = 3
+    
+    # AI (optional)
+    AI_ENABLED: bool = False
+    AI_API_KEY: str = ""
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
