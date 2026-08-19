@@ -95,7 +95,7 @@ async def list_jobs(db: Session, limit: int = 10):
         logger.info(f"    Location: {job.location}")
         logger.info(f"    URL: {job.url}")
         logger.info(f"    Source: {job.source_name}")
-        logger.info()
+        logger.info("")
 
 
 if __name__ == "__main__":

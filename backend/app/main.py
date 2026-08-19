@@ -1,22 +1,66 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from app.config import settings
-from app.api import jobs_router, sources_router
-from app.api.ingestion_v2 import router as ingestion_router
+from contextlib import asynccontextmanager
 import logging
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api import (
+    ingestion_router,
+    jobs_router,
+    sources_router,
+)
+from app.config import settings
+
+
+logging.basicConfig(
+    level=logging.INFO,
+)
+
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup and shutdown lifecycle."""
+
+    try:
+        from app.database import Base, engine
+
+        logger.info(
+            "Creating database tables..."
+        )
+
+        Base.metadata.create_all(
+            bind=engine
+        )
+
+        logger.info(
+            "Database tables ready"
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "Database initialization failed: %s",
+            exc,
+        )
+
+        # Do not start a supposedly healthy API
+        # when the database is unavailable.
+        raise
+
+    yield
+
+
 app = FastAPI(
     title=settings.API_TITLE,
     version=settings.API_VERSION,
-    description="JobPulse — Resilient Job Intelligence Engine",
+    description=(
+        "JobPulse — Resilient Job Intelligence Engine"
+    ),
+    lifespan=lifespan,
 )
 
-# Add CORS middleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -25,29 +69,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Lazy load database - only create tables when needed
-@app.on_event("startup")
-async def startup_event():
-    """Create tables on startup."""
-    try:
-        from app.database import engine, Base
-        logger.info("Creating database tables...")
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables created successfully")
-    except Exception as e:
-        logger.error(f"Error creating tables: {e}")
-        # Don't crash the app, let it start anyway
 
+app.include_router(
+    jobs_router
+)
 
-# Register routers
-app.include_router(jobs_router)
-app.include_router(sources_router)
-app.include_router(ingestion_router)
+app.include_router(
+    sources_router
+)
+
+app.include_router(
+    ingestion_router
+)
 
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint."""
+    """Application health endpoint."""
+
     return {
         "status": "healthy",
         "version": settings.API_VERSION,
@@ -57,19 +96,13 @@ def health_check():
 
 @app.get("/")
 def root():
-    """Root endpoint."""
+    """API root."""
+
     return {
-        "message": "JobPulse API — Resilient Job Intelligence Engine",
+        "message": (
+            "JobPulse API — "
+            "Resilient Job Intelligence Engine"
+        ),
         "docs": "/docs",
         "openapi": "/openapi.json",
     }
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=settings.ENVIRONMENT == "development",
-    )

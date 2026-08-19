@@ -1,7 +1,16 @@
-from .source import Source
 from .job import Job
-from .ingestion_run import IngestionRun
+from .source import Source, SourceType, SourceStatus
+from .ingestion_run import IngestionRun, IngestionRunStatus
 from .ingestion_error import IngestionError
 from .ai_enrichment import AIEnrichment
 
-__all__ = ["Source", "Job", "IngestionRun", "IngestionError", "AIEnrichment"]
+__all__ = [
+    "Job",
+    "Source",
+    "SourceType",
+    "SourceStatus",
+    "IngestionRun",
+    "IngestionRunStatus",
+    "IngestionError",
+    "AIEnrichment",
+]

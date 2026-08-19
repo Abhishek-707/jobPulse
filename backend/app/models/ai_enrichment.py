@@ -17,7 +17,7 @@ class AIEnrichment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, unique=True, index=True)
-    status = Column(String(50), default=AIEnrichmentStatus.PENDING.value)
+    status = Column(String(50), default=AIEnrichmentStatus.PENDING)
     category = Column(String(255), nullable=True)
     skills = Column(Text, nullable=True)  # JSON or comma-separated
     experience_level = Column(String(100), nullable=True)  # Junior, Mid, Senior
