@@ -77,3 +77,65 @@ def get_source_health(
         "last_failure_at": source.last_failure_at,
         "last_run_at": source.last_run_at,
     }
+
+
+@router.post("/seed")
+def seed_sources(
+    db: Session = Depends(get_db),
+):
+    """
+    Create the default JobPulse sources.
+
+    This is useful for initializing a fresh production database.
+    Existing sources are not duplicated.
+    """
+
+    default_sources = [
+        {
+            "name": "Himalayas Jobs RSS",
+            "type": "RSS",
+            "base_url": "https://himalayas.app/jobs/rss",
+            "status": "HEALTHY",
+            "health_score": 0.0,
+        },
+        {
+            "name": "Dev.to API",
+            "type": "API",
+            "base_url": "https://dev.to/api/articles?tag=job",
+            "status": "HEALTHY",
+            "health_score": 0.0,
+        },
+        {
+            "name": "Sandbox Jobs",
+            "type": "SANDBOX",
+            "base_url": "http://localhost:5000",
+            "status": "HEALTHY",
+            "health_score": 0.0,
+        },
+    ]
+
+    created = []
+    existing = []
+
+    for data in default_sources:
+        source = (
+            db.query(Source)
+            .filter(Source.name == data["name"])
+            .first()
+        )
+
+        if source:
+            existing.append(source.name)
+            continue
+
+        source = Source(**data)
+        db.add(source)
+        created.append(source.name)
+
+    db.commit()
+
+    return {
+        "message": "Source initialization completed",
+        "created": created,
+        "already_existing": existing,
+    }
