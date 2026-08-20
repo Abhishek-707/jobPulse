@@ -4,6 +4,7 @@ from datetime import datetime
 from app.ingestion.base import JobSource, RawJob
 import logging
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,7 +23,7 @@ class APIAdapter(JobSource):
         self.timeout = timeout
 
     async def fetch(self) -> List[RawJob]:
-        """Fetch jobs from API."""
+        """Fetch jobs from a public API."""
 
         try:
             logger.info(
@@ -41,127 +42,59 @@ class APIAdapter(JobSource):
                 response = await client.get(self.api_url)
 
                 logger.info(
-                    f"[{self.source_name}] "
-                    f"API response: {response.status_code}"
+                    f"[{self.source_name}] API response: "
+                    f"{response.status_code}"
                 )
 
                 response.raise_for_status()
 
                 data = response.json()
 
-                logger.info(
-                    f"[{self.source_name}] "
-                    f"API response type: {type(data).__name__}"
-                )
-
                 jobs = self._parse_api_response(data)
 
                 logger.info(
                     f"[{self.source_name}] "
-                    f"Fetched {len(jobs)} jobs from API"
+                    f"Fetched {len(jobs)} valid jobs"
                 )
 
                 return jobs
 
         except httpx.TimeoutException as e:
-
             logger.error(
                 f"[{self.source_name}] "
                 f"API request timed out after {self.timeout}s: {e}"
             )
-
             raise
 
         except httpx.HTTPStatusError as e:
-
             logger.error(
                 f"[{self.source_name}] "
-                f"API HTTP status error: "
-                f"{e.response.status_code}"
+                f"API HTTP status error: {e.response.status_code}"
             )
-
             raise
 
         except httpx.HTTPError as e:
-
             logger.error(
-                f"[{self.source_name}] "
-                f"API HTTP error: {e}"
+                f"[{self.source_name}] API HTTP error: {e}"
             )
-
             raise
 
         except Exception as e:
-
             logger.error(
-                f"[{self.source_name}] "
-                f"Error fetching from API: {e}"
+                f"[{self.source_name}] Error fetching from API: {e}"
             )
-
             raise
 
     def _parse_api_response(
         self,
         data: Any,
     ) -> List[RawJob]:
-        """
-        Parse API response into RawJob objects.
-
-        Supports both:
-
-        1. Dictionary responses:
-           {
-               "jobs": [...]
-           }
-
-           {
-               "results": [...]
-           }
-
-           {
-               "data": [...]
-           }
-
-        2. Direct list responses:
-           [
-               {...},
-               {...}
-           ]
-
-        Dev.to currently returns a direct JSON list.
-        """
-
-        jobs: List[RawJob] = []
-
-        # =========================================================
-        # DETERMINE JOB LIST
-        # =========================================================
+        """Parse common public job API responses."""
 
         if isinstance(data, list):
-
-            # API returned:
-            #
-            # [
-            #   {...},
-            #   {...}
-            # ]
-
             job_list = data
 
-            logger.info(
-                f"[{self.source_name}] "
-                f"API returned a direct list with "
-                f"{len(job_list)} items"
-            )
-
         elif isinstance(data, dict):
-
-            # API returned something like:
-            #
-            # {
-            #     "jobs": [...]
-            # }
-
             job_list = (
                 data.get("jobs")
                 or data.get("results")
@@ -169,52 +102,24 @@ class APIAdapter(JobSource):
                 or []
             )
 
-            if not isinstance(job_list, list):
-
-                logger.warning(
-                    f"[{self.source_name}] "
-                    f"Expected a list but received "
-                    f"{type(job_list).__name__}"
-                )
-
-                job_list = []
-
         else:
-
             logger.warning(
                 f"[{self.source_name}] "
-                f"Unsupported API response type: "
-                f"{type(data).__name__}"
+                f"Unsupported response type: {type(data).__name__}"
             )
+            return []
 
-            job_list = []
+        if not isinstance(job_list, list):
+            return []
 
-        # =========================================================
-        # PARSE EACH ITEM
-        # =========================================================
+        jobs: List[RawJob] = []
 
-        for index, item in enumerate(
-            job_list,
-            start=1,
-        ):
+        for index, item in enumerate(job_list, start=1):
+
+            if not isinstance(item, dict):
+                continue
 
             try:
-
-                # -------------------------------------------------
-                # SAFETY CHECK
-                # -------------------------------------------------
-
-                if not isinstance(item, dict):
-
-                    logger.warning(
-                        f"[{self.source_name}] "
-                        f"Skipping item {index}: "
-                        f"expected dict, got "
-                        f"{type(item).__name__}"
-                    )
-
-                    continue
-
                 # -------------------------------------------------
                 # TITLE
                 # -------------------------------------------------
@@ -222,6 +127,7 @@ class APIAdapter(JobSource):
                 title = self._first_value(
                     item,
                     [
+                        "position",
                         "title",
                         "job_title",
                         "name",
@@ -277,10 +183,20 @@ class APIAdapter(JobSource):
                     item,
                     [
                         "url",
-                        "link",
+                        "apply_url",
                         "job_url",
+                        "link",
                     ],
                 )
+
+                # Remote OK sometimes provides an apply URL
+                if not url:
+                    url = self._first_value(
+                        item,
+                        [
+                            "apply_url",
+                        ],
+                    )
 
                 # -------------------------------------------------
                 # JOB TYPE
@@ -304,6 +220,7 @@ class APIAdapter(JobSource):
                     self._first_value(
                         item,
                         [
+                            "date",
                             "published_at",
                             "date_posted",
                             "published",
@@ -320,29 +237,59 @@ class APIAdapter(JobSource):
                     item,
                     [
                         "id",
+                        "slug",
                         "external_id",
                     ],
                 )
 
                 # -------------------------------------------------
-                # CREATE RAW JOB
+                # IMPORTANT VALIDATION
+                # -------------------------------------------------
+
+                # A real job listing should have at least:
+                #
+                # 1. A title
+                # 2. A company
+                #
+                # This prevents generic articles from becoming jobs.
+
+                if not title:
+                    logger.debug(
+                        f"[{self.source_name}] "
+                        f"Skipping item {index}: missing job title"
+                    )
+                    continue
+
+                if not company:
+                    logger.debug(
+                        f"[{self.source_name}] "
+                        f"Skipping item {index}: missing company"
+                    )
+                    continue
+
+                # -------------------------------------------------
+                # CREATE JOB
                 # -------------------------------------------------
 
                 job = RawJob(
                     title=self._limit(
-                        str(title or "").strip(),
+                        str(title).strip(),
                         255,
                     ),
 
                     company=self._limit(
-                        str(company or "Unknown").strip(),
+                        str(company).strip(),
                         255,
                     ),
 
-                    location=self._limit(
-                        str(location).strip(),
-                        255,
-                    ) if location else None,
+                    location=(
+                        self._limit(
+                            str(location).strip(),
+                            255,
+                        )
+                        if location
+                        else None
+                    ),
 
                     description=(
                         str(description).strip()
@@ -356,10 +303,14 @@ class APIAdapter(JobSource):
                         else None
                     ),
 
-                    job_type=self._limit(
-                        str(job_type).strip(),
-                        100,
-                    ) if job_type else None,
+                    job_type=(
+                        self._limit(
+                            str(job_type).strip(),
+                            100,
+                        )
+                        if job_type
+                        else None
+                    ),
 
                     published_at=published_at,
 
@@ -370,53 +321,19 @@ class APIAdapter(JobSource):
                     ),
                 )
 
-                # -------------------------------------------------
-                # VALIDATE BASIC DATA
-                # -------------------------------------------------
-
-                if not job.title:
-
-                    logger.warning(
-                        f"[{self.source_name}] "
-                        f"Skipping API item {index}: "
-                        f"missing title"
-                    )
-
-                    continue
-
                 jobs.append(job)
 
             except Exception as e:
-
                 logger.error(
                     f"[{self.source_name}] "
                     f"Error parsing API item {index}: {e}"
                 )
-
                 continue
 
         logger.info(
             f"[{self.source_name}] "
-            f"Successfully parsed {len(jobs)} API jobs"
+            f"Successfully parsed {len(jobs)} real job listings"
         )
-
-        # =========================================================
-        # DEBUG FIRST 5
-        # =========================================================
-
-        for index, job in enumerate(
-            jobs[:5],
-            start=1,
-        ):
-
-            logger.info(
-                f"[{self.source_name}] "
-                f"JOB {index}: "
-                f"title={job.title!r} | "
-                f"company={job.company!r} | "
-                f"location={job.location!r} | "
-                f"job_type={job.job_type!r}"
-            )
 
         return jobs
 
@@ -425,16 +342,12 @@ class APIAdapter(JobSource):
         item: dict,
         keys: List[str],
     ) -> Optional[Any]:
-        """
-        Return the first non-empty value from a dictionary.
-        """
+        """Return the first non-empty value."""
 
         for key in keys:
-
             value = item.get(key)
 
             if value is not None and value != "":
-
                 return value
 
         return None
@@ -455,44 +368,25 @@ class APIAdapter(JobSource):
     def _parse_date(
         date_value: Optional[Any],
     ) -> Optional[datetime]:
-        """Parse dates from common API formats."""
+        """Parse common API date formats."""
 
         if not date_value:
             return None
 
-        # Already a datetime
-        if isinstance(
-            date_value,
-            datetime,
-        ):
+        if isinstance(date_value, datetime):
             return date_value
 
-        date_str = str(
-            date_value
-        ).strip()
+        date_str = str(date_value).strip()
 
         if not date_str:
             return None
 
-        # =========================================================
-        # ISO FORMAT
-        # =========================================================
-
         try:
-
             return datetime.fromisoformat(
-                date_str.replace(
-                    "Z",
-                    "+00:00",
-                )
+                date_str.replace("Z", "+00:00")
             )
-
         except Exception:
             pass
-
-        # =========================================================
-        # COMMON DATE FORMATS
-        # =========================================================
 
         formats = [
             "%Y-%m-%d",
@@ -503,19 +397,12 @@ class APIAdapter(JobSource):
         ]
 
         for fmt in formats:
-
             try:
-
                 return datetime.strptime(
                     date_str,
                     fmt,
                 )
-
             except Exception:
                 continue
-
-        logger.debug(
-            f"Could not parse date: {date_str}"
-        )
 
         return None
