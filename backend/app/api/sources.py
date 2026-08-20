@@ -78,7 +78,24 @@ def get_source_health(
         "last_run_at": source.last_run_at,
     }
 
+@router.delete("/cleanup-devto")
+def cleanup_devto_jobs(
+    db: Session = Depends(get_db),
+):
+    """Remove legacy Dev.to article records."""
 
+    deleted = (
+        db.query(Job)
+        .filter(Job.source_name == "Dev.to API")
+        .delete(synchronize_session=False)
+    )
+
+    db.commit()
+
+    return {
+        "message": "Legacy Dev.to jobs removed",
+        "deleted": deleted,
+    }
 @router.post("/seed")
 def seed_sources(
     db: Session = Depends(get_db),
